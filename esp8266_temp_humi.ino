@@ -8,8 +8,18 @@
  * - DS18B20
  * 
  * Software:
- * - wifi
- * - mqtt (pubsubclient)
+ * - wifi (integrated in esp8266)
+ * - MQTT (PubSubClient)
+ * - Over-The-Air-Update (ArduinoOTA)
+ * 
+ * Setup:
+ * - Change SSID of yout wifi (STASSID)
+ * - Change wifi-password (STAPSK)
+ * - Change hostname of your module (host)
+ * - Change ip-address of your MQTT-Broker (MQTT_BROKER)
+ * - Change DHT-xx-Pin (DHTPIN)
+ * - Change DHT-Typ: 11 or 22 (DHTTYPE)
+ * - Change DS18B20-Pin (ONE_WIRE_BUS)
  * 
  * Author: René Brixel <mail@campingtech.de>
  * Version: 1.0
@@ -36,11 +46,9 @@ char msg[50];
 //int value = 0;
 
 // OTA-Update
-/*
-#include <ESP8266WebServer.h>
-ESP8266WebServer server(80);
-const char* serverIndex = "<form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
-*/
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 // DHT
 #include <DHT.h>
@@ -74,6 +82,9 @@ void setup() {
   // Start wifi and connect to access point
   setup_wifi();
 
+  // Start wifi and connect to access point
+  setup_otau();
+
   // Start MQTT
   client.setServer(MQTT_BROKER, 1883); // ip-address, port 1883
   //client.setCallback(callback); // only needed for subscription of topic
@@ -98,6 +109,48 @@ void setup_wifi() {
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   delay(500);
+}
+
+void setup_otau() {
+  // ArduinoOTA.setPort(8266); // Port defaults to 8266
+  ArduinoOTA.setHostname(host); // Hostname defaults to esp8266-[ChipID]
+  // ArduinoOTA.setPassword("campingtech"); // No authentication by default
+  // Password can be set with it's md5 value as well
+  // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
+  // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
 }
 
 /*
@@ -126,7 +179,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 */
 
 /*
-// MQTT-Reconnect (for subscribe):
+// MQTT-Reconnect (for subscribe and publish):
 void reconnect() {
   while (!client.connected()) {
     Serial.println("Reconnecting MQTT...");
@@ -157,7 +210,18 @@ void reconnect() {
 }
 
 void loop() {
-  // Non-blocking-Code; only executed when interval is reached
+  // --- realtime code ---
+
+  // Arduino-OTA:
+  ArduinoOTA.handle();
+  
+  // MQTT:
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // --- non-blocking-code ---
   unsigned long nbcCurrentMillis = millis(); // get actual timestamp
   if (nbcCurrentMillis - nbcPreviousMillis >= nbcInterval) {
     nbcPreviousMillis = nbcCurrentMillis;
@@ -170,15 +234,15 @@ void loop() {
       Serial.println("ds18b20 not found.");
       client.publish("/climate/outdoor/temperature", "error");
     } else {
-      float outTemp = sensors.getTempCByIndex(0); // read outdoor temperature
+      float outTemp = sensors.getTempCByIndex(0); // read first sensor for outdoor temperature
       
       snprintf (msg, 50, "%.2f", outTemp);
       client.publish("/climate/outdoor/temperature", msg);
       Serial.println("/climate/outdoor/temperature: " + String(outTemp));
     }
 
-    float inHumi  = dht.readHumidity(); // read indoor humidity
-    float inTemp  = dht.readTemperature(); // read indoor temperature
+    float inHumi = dht.readHumidity(); // read indoor humidity
+    float inTemp = dht.readTemperature(); // read indoor temperature
 
     snprintf (msg, 50, "%.2f", inTemp);
     client.publish("/climate/indoor/floor/temperature", msg);
@@ -189,14 +253,6 @@ void loop() {
     Serial.println("/climate/indoor/floor/humidity: " + String(inHumi));
     Serial.println("- - - - -");
   }
-
-  // --- realtime code starts here ---
-  
-  // MQTT:
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
 }
 
 /*
