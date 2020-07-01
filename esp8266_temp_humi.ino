@@ -13,12 +13,12 @@
  * - Over-The-Air-Update (ArduinoOTA)
  * 
  * Setup:
- * - Change SSID of yout wifi (STASSID)
+ * - Change SSID of your wifi (STASSID)
  * - Change wifi-password (STAPSK)
  * - Change hostname of your module (host)
  * - Change ip-address of your MQTT-Broker (MQTT_BROKER)
  * - Change DHT-xx-Pin (DHTPIN)
- * - Change DHT-Typ: 11 or 22 (DHTTYPE)
+ * - Change DHT-Type: 11 or 22 (DHTTYPE)
  * - Change DS18B20-Pin (ONE_WIRE_BUS)
  * 
  * Author: René Brixel <mail@campingtech.de>
@@ -183,7 +183,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void reconnect() {
   while (!client.connected()) {
     Serial.println("Reconnecting MQTT...");
-    if (!client.connect("ESP8266Client")) {
+    if (!client.connect(host)) {
+      // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession]) // https://pubsubclient.knolleary.net/api
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" retrying in 5 seconds");
@@ -199,7 +200,8 @@ void reconnect() {
 void reconnect() {
   while (!client.connected()) {
     Serial.print("Reconnecting...");
-    if (!client.connect("ESP8266Client")) {
+    if (!client.connect(host)) {
+      // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession]) // https://pubsubclient.knolleary.net/api
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" retrying in 5 seconds");
