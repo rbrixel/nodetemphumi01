@@ -4,13 +4,14 @@
  * 
  * Hardware: 
  * - ESP-12F (ESP8266, "D1 Mini")
- * - DHT22 (or DHT11)
- * - DS18B20
+ * - DHT22 (in future: BME280 - temperature, humidity and air pressure)
+ * - DS18B20 (waterproof for outdoor measurement)
  * 
  * Software:
  * - wifi (integrated in esp8266)
  * - MQTT (PubSubClient)
  * - Over-The-Air-Update (ArduinoOTA)
+ * - OneWire (OneWire)
  * 
  * Setup:
  * - Change SSID of your wifi (STASSID)
@@ -21,24 +22,37 @@
  * - Change DHT-Type: 11 or 22 (DHTTYPE)
  * - Change DS18B20-Pin (ONE_WIRE_BUS)
  * 
+ * Pinmapping Wemos D1 Mini:
+ * Board  Arduino/GPIO  Special
+ * D0     16        
+ * D1     5             SCL - i2c
+ * D2     4             SDA - i2c
+ * D3     0
+ * D4     2
+ * D5     14            SCK - SPI
+ * D6     12            MISO - SPI
+ * D7     13            MOSI - SPI
+ * D8     15            SS - SPI
+ * TX     1
+ * RX     3
+ * 
  * Author: René Brixel <mail@campingtech.de>
- * Version: 1.0
- * Date: 2020-06-30
+ * Date: 2020-07-03
  */
 
 // WIFI
-#include <ESP8266WiFi.h>
+#include <ESP8266WiFi.h> // ESP8266
 #ifndef STASSID
-#define STASSID "wlan-name" // your wifi-name
-#define STAPSK  "wlan-passwort" // your wifi-password
+#define STASSID "******" // your wifi-name
+#define STAPSK  "******" // your wifi-password
 #endif
-const char* host = "nodetemphumi01"; // hostname of module
+const char* host = "******"; // hostname of module
 const char* ssid     = STASSID;
 const char* password = STAPSK;
 
 // MQTT-Client
 #include <PubSubClient.h>
-const char* MQTT_BROKER = "BROKER_IP"; // ip-address of your mqtt-broker
+const char* MQTT_BROKER = "***.***.***.***"; // ip-address of your mqtt-broker
 WiFiClient espClient;
 PubSubClient client(espClient);
 //long lastMsg = 0;
@@ -46,27 +60,29 @@ char msg[50];
 //int value = 0;
 
 // OTA-Update
-#include <ESP8266mDNS.h>
+#include <ESP8266mDNS.h> // ESP8266
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
 // DHT
 #include <DHT.h>
-#define DHTPIN 2  
-#define DHTTYPE DHT22 // DHT11, DHT22
+#define DHTPIN 2
+#define DHTTYPE DHT11 // DHT11, DHT22
 DHT dht(DHTPIN, DHTTYPE);
 
 // DS18B20
+/*
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #define ONE_WIRE_BUS 3  //Sensor DS18B20
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 int sensorCount;
+*/
 
 // Interval-values (for non blocking code)
 unsigned long nbcPreviousMillis = 0; // holds last timestamp
-const long nbcInterval = 2000; // interval in milliseconds (1000 milliseconds = 1 second)
+const long nbcInterval = 5000; // interval in milliseconds (1000 milliseconds = 1 second)
 
 void setup() {
   // Start serial-connection
@@ -76,8 +92,10 @@ void setup() {
   dht.begin();
 
   // Start DS18B20-sensor
+  /*
   sensors.begin();
   sensorCount = sensors.getDS18Count();
+  */
 
   // Start wifi and connect to access point
   setup_wifi();
@@ -201,7 +219,7 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Reconnecting...");
     if (!client.connect(host)) {
-      // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession]) // https://pubsubclient.knolleary.net/api
+      // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession])
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" retrying in 5 seconds");
@@ -229,8 +247,9 @@ void loop() {
     nbcPreviousMillis = nbcCurrentMillis;
 
     Serial.println("- - - - -");
-    Serial.println("Publishing sensor-data!");
+    Serial.println("Timestamp: " + String(millis()));
 
+    /*
     // Check, if ds18b20 is reachable
     if (sensorCount == 0) {
       Serial.println("ds18b20 not found.");
@@ -242,6 +261,7 @@ void loop() {
       client.publish("/climate/outdoor/temperature", msg);
       Serial.println("/climate/outdoor/temperature: " + String(outTemp));
     }
+    */
 
     float inHumi = dht.readHumidity(); // read indoor humidity
     float inTemp = dht.readTemperature(); // read indoor temperature
@@ -253,7 +273,6 @@ void loop() {
 
     Serial.println("/climate/indoor/floor/temperature: " + String(inTemp));
     Serial.println("/climate/indoor/floor/humidity: " + String(inHumi));
-    Serial.println("- - - - -");
   }
 }
 
@@ -261,5 +280,6 @@ void loop() {
  * Appendix - sources for tutorials:
  * 
  * MQTT publish/subscribe: https://smarthome-blogger.de/tutorial/esp8266-mqtt-tutorial/ (german)
+ * MQTT PubSubClient-API: // https://pubsubclient.knolleary.net/api (english)
  * DHT22: https://funduino.de/anleitung-dht11-dht22 (german)
  */
