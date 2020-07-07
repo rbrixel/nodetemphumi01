@@ -6,10 +6,10 @@
  * - ESP-12F (ESP8266, "Wemos D1 Mini"-Clone)
  * - BME280 (temperature, humidity and air pressure)
  * - DS18B20 (waterproof for outdoor measurement)
- * - ublox Neo-6M GPS-module
+ * - ublox Neo-6M (GPS, date, time)
  * 
  * Software:
- * - wifi (integrated in esp8266)
+ * - wifi8266 (integrated in esp8266)
  * - EspMQTTClient (aka PubSubClient) 1.8.0
  * - Over-The-Air-Update (ArduinoOTA)
  * - OneWire (OneWire - use 2.3.0 for GPIO16/D0!)
@@ -39,7 +39,9 @@
  * RX     3
  * 
  * Author: René Brixel <mail@campingtech.de>
- * Date: 2020-07-02
+ * Date: 2020-07-07
+ * Web: https://campingtech.de/opensrv
+ * GitHub: https://github.com/rbrixel
  */
 
 // WIFI
@@ -48,8 +50,8 @@
 #define STASSID "*****" // your wifi-name
 #define STAPSK  "*****" // your wifi-password
 #endif
-const char* host = "nodetemphumi01"; // hostname of module
-const char* ssid     = STASSID;
+const char* host = "node01"; // hostname of module
+const char* ssid = STASSID;
 const char* password = STAPSK;
 
 // MQTT-Client
@@ -57,9 +59,6 @@ const char* password = STAPSK;
 const char* MQTT_BROKER = "192.168.111.199"; // ip-address of your mqtt-broker
 WiFiClient espClient;
 PubSubClient client(espClient);
-//long lastMsg = 0;
-char msg[50];
-//int value = 0;
 
 // OTA-Update
 #include <ESP8266mDNS.h> // ESP8266
@@ -67,8 +66,6 @@ char msg[50];
 #include <ArduinoOTA.h>
 
 // BME280
-// SCL - D1 - GPIO5
-// SDA - D2 - GPIO4
 #include <cactus_io_BME280_I2C.h>
 BME280_I2C bme(0x76); // uint i2c-address
 
@@ -77,18 +74,13 @@ BME280_I2C bme(0x76); // uint i2c-address
 #include <DallasTemperature.h>
 #define ONE_WIRE_BUS 16 // GPIO16 - D0
 OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensors(&oneWire);
-int sensorCount;
+DallasTemperature ds18sensors(&oneWire);
 
 // GPS
 #include <TinyGPS++.h>
 #include <SoftwareSerial.h>
 static const int RXPin = 0, TXPin = 2; // RXPin = D3, TXPin = D4;
 static const uint32_t GPSBaud = 9600; // Standard 9600, alternative 4800
-float gpsLat = 0.0; // Latitude
-float gpsLon = 0.0; // Longitude
-float gpsSat = 0.0; // Satellites
-float gpsAlt = 0.0; // Altitude
 TinyGPSPlus gps;
 SoftwareSerial ss(RXPin, TXPin);
 
@@ -97,7 +89,7 @@ unsigned long nbcPreviousMillis = 0; // holds last timestamp
 const long nbcInterval = 5000; // interval in milliseconds (1000 milliseconds = 1 second)
 
 void setup() {
-  // Start serial-connection
+  // Start serial-connection for esp
   Serial.begin(115200);
 
   // Start BME280
@@ -108,21 +100,19 @@ void setup() {
   bme.setTempCal(-1);// Temp was reading high so subtract 1 degree
 
   // Start DS18B20-sensor
-  sensors.begin();
-  sensorCount = sensors.getDS18Count();
+  ds18sensors.begin();
 
   // Start wifi and connect to access point
   setup_wifi();
 
-  // Start wifi and connect to access point
+  // Start over-the-air-update
   setup_otau();
 
-  // Start MQTT
+  // Start MQTT-publisher
   client.setServer(MQTT_BROKER, 1883); // ip-address, port 1883
-  //client.setCallback(callback); // only needed for subscription of topic
 
   // Start Software-serial for gps
-  ss.begin(GPSBaud); // connect gps sensor (standard 9600)
+  ss.begin(GPSBaud);
 }
 
 void setup_wifi() {
@@ -130,7 +120,7 @@ void setup_wifi() {
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
-  WiFi.mode(WIFI_STA); // set explicit as wifi-client - important that it not acts as an ap AND client!
+  WiFi.mode(WIFI_STA); // set explicit as wifi-client - important that it not acts as an accesspoint AND client!
   WiFi.hostname(host); // set hostname of module
   WiFi.begin(ssid, password);
 
@@ -188,49 +178,6 @@ void setup_otau() {
   ArduinoOTA.begin();
 }
 
-/*
-// Callback for subscribe MQTT-topic:
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Received message [");
-  Serial.print(topic);
-  Serial.print("] ");
-  char msg[length + 1];
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-    msg[i] = (char)payload[i];
-  }
-  Serial.println();
-  
-  msg[length] = '\0';
-  Serial.println(msg);
- 
-  if(strcmp(msg,"on")==0) {
-    //digitalWrite(13, HIGH);
-  }
-  else if(strcmp(msg,"off")==0) {
-    //digitalWrite(13, LOW);
-  }
-}
-*/
-
-/*
-// MQTT-Reconnect (for subscribe and publish):
-void reconnect() {
-  while (!client.connected()) {
-    Serial.println("Reconnecting MQTT...");
-    if (!client.connect(host)) {
-      // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession]) // https://pubsubclient.knolleary.net/api
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" retrying in 5 seconds");
-      delay(5000);
-    }
-  }
-  client.subscribe("/home/data");
-  Serial.println("MQTT Connected!");
-}
-*/
-
 // MQTT-Reconnect (for publishing only):
 void reconnect() {
   while (!client.connected()) {
@@ -239,8 +186,8 @@ void reconnect() {
       // To connect with credetials: boolean connect (clientID, [username, password], [willTopic, willQoS, willRetain, willMessage], [cleanSession])
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" retrying in 5 seconds");
-      delay(5000);
+      Serial.println(" retrying in 3 seconds");
+      delay(3000);
     }
   }
   Serial.println("MQTT Connected!");
@@ -258,47 +205,75 @@ void loop() {
   }
   client.loop();
 
+  // GPS:
+  float gpsLat = 0.0; // double lat() / Latitude
+  float gpsLon = 0.0; // double lng() / Longitude
+  unsigned int gpsSat = 0.0; // uint32_t value() / Satellites
+  float gpsAlt = 0.0; // double meters() / Altitude
+  unsigned int gpsYear = 0; // uint16_t year() / Year
+  unsigned int gpsMonth = 0; // uint8_t month() / Month
+  unsigned int gpsDay = 0; // uint8_t day() / Day
+  unsigned int gpsHour = 0; // uint8_t hour() / Hour
+  unsigned int gpsMinute = 0; // uint8_t hour() / Minute
+  unsigned int gpsSecond = 0; // uint8_t second() / Second
+  unsigned int gpsCentiSecond = 0; // uint8_t centisecond() / Centisecond
+  // A variable declared as "unsigned" can only stores positive values!
+
   while (ss.available() > 0) {
     if (gps.encode(ss.read())) {
-      if (gps.location.isValid()) {
+      if (gps.location.isValid() && gps.location.isUpdated()) {
         gpsLat = gps.location.lat();
         gpsLon = gps.location.lng();
       }
-      if (gps.satellites.isValid()) {
+      if (gps.satellites.isValid() && gps.satellites.isUpdated()) {
         gpsSat = gps.satellites.value();
       }
-      if (gps.altitude.isValid()) {
+      if (gps.altitude.isValid() && gps.altitude.isUpdated()) {
         gpsAlt = gps.altitude.meters();
+      }
+      if (gps.time.isValid() && gps.time.isUpdated()) {
+        gpsHour = gps.time.hour();
+        gpsMinute = gps.time.minute();
+        gpsSecond = gps.time.second();
+        gpsCentiSecond = gps.time.centisecond();
+      }
+      if (gps.date.isValid() && gps.date.isUpdated()) {
+        gpsYear = gps.date.year();
+        gpsMonth = gps.date.month();
+        gpsDay = gps.date.day();
       }
     }
   }
-
-  // --- non-blocking-code ---
+  
+  // --- non-blocking-code, every x sec. publishing ---
   unsigned long nbcCurrentMillis = millis(); // get actual timestamp
   if (nbcCurrentMillis - nbcPreviousMillis >= nbcInterval) {
     nbcPreviousMillis = nbcCurrentMillis;
 
+    // MQTT-Message-Variable
+    char msg[50];
+
     Serial.println("- - - - -");
     Serial.println("Uptime (ms): " + String(millis()));
 
-    // DS18B20
-    if (sensorCount == 0) {
+    // DS18B20:
+    if (ds18sensors.getDS18Count() == 0) {
       Serial.println("ds18b20 not found.");
       client.publish("/climate/outdoor/temperature", "error");
     } else {
-      sensors.requestTemperatures(); // Send the command to get temperature readings 
-      float outTemp = sensors.getTempCByIndex(0); // read first sensor for outdoor temperature
+      ds18sensors.requestTemperatures(); // Send the command to get temperature readings 
+      float outTemp = ds18sensors.getTempCByIndex(0); // read first sensor for outdoor temperature
       
       snprintf (msg, 50, "%.2f", outTemp);
       client.publish("/climate/outdoor/temperature", msg);
       Serial.println("/climate/outdoor/temperature: " + String(outTemp) + " (Celsius)");
     }
 
-    // BME280
+    // BME280:
     bme.readSensor();
     float bTemp = bme.getTemperature_C(); // Temperature in Celsius
     float bHumi = bme.getHumidity(); // Humidity in Precent
-    float bHp = bme.getPressure_HP(); // pressure in hectapascals
+    float bHp = bme.getPressure_HP(); // pressure in pascals
     float bMb = bme.getPressure_MB(); // pressure in millibars
 
     snprintf (msg, 50, "%.2f", bTemp);
@@ -306,52 +281,103 @@ void loop() {
     snprintf (msg, 50, "%.2f", bHumi);
     client.publish("/climate/indoor/floor/humidity", msg);
     snprintf (msg, 50, "%.2f", bHp);
-    client.publish("/climate/indoor/floor/pressure-hp", msg);
+    client.publish("/climate/indoor/floor/pressure-p", msg);
     snprintf (msg, 50, "%.2f", bMb);
     client.publish("/climate/indoor/floor/pressure-mb", msg);
 
     Serial.println("/climate/indoor/floor/temperature: " + String(bTemp) + " (Celsius)");
     Serial.println("/climate/indoor/floor/humidity: " + String(bHumi) + " (%)");
-    Serial.println("/climate/indoor/floor/pressure-hp: " + String(bHp) + " (hectapascals)");
+    Serial.println("/climate/indoor/floor/pressure-p: " + String(bHp) + " (pascals)");
     Serial.println("/climate/indoor/floor/pressure-mb: " + String(bMb) + " (millibars)");
 
-    // GPS
+    // GPS:
     if (gpsLat == 0.0) {
       client.publish("/position/latitude", "error");
     } else {
       snprintf (msg, 50, "%.2f", gpsLat);
       client.publish("/position/latitude", msg);
     }
+
     if (gpsLon == 0.0) {
       client.publish("/position/latitude", "error");
     } else {
       snprintf (msg, 50, "%.2f", gpsLon);
       client.publish("/position/longitude", msg);
     }
-    if (gpsSat == 0.0) {
+
+    if (gpsSat == 0) {
       client.publish("/position/latitude", "error");
     } else {
-      snprintf (msg, 50, "%.0f", gpsSat);
+      snprintf (msg, 50, "%0d", gpsSat);
       client.publish("/position/satellites", msg);
     }
+
     if (gpsAlt == 0.0) {
       client.publish("/position/latitude", "error");
     } else {
       snprintf (msg, 50, "%.2f", gpsAlt);
       client.publish("/position/altitude", msg);
     }
+
+    if (gpsYear == 0) {
+      client.publish("/position/date/year", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsYear);
+      client.publish("/position/date/year", msg);
+    }
+
+    if (gpsMonth == 0) {
+      client.publish("/position/date/month", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsMonth);
+      client.publish("/position/date/month", msg);
+    }
+
+    if (gpsDay == 0) {
+      client.publish("/position/date/day", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsDay);
+      client.publish("/position/date/day", msg);
+    }
+
+    if (gpsHour == 0) {
+      client.publish("/position/time/hour", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsHour);
+      client.publish("/position/time/hour", msg);
+    }
+
+    if (gpsMinute == 0) {
+      client.publish("/position/time/minute", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsMinute);
+      client.publish("/position/time/minute", msg);
+    }
+
+    if (gpsSecond == 0) {
+      client.publish("/position/time/second", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsSecond);
+      client.publish("/position/time/second", msg);
+    }
+
+    if (gpsCentiSecond == 0) {
+      client.publish("/position/time/centisecond", "error");
+    } else {
+      snprintf (msg, 50, "%0d", gpsCentiSecond);
+      client.publish("/position/time/centisecond", msg);
+    }
     
     Serial.println("/position/latitude: " + String(gpsLat) + " (N, Breitengrad)");
     Serial.println("/position/longitude: " + String(gpsLon) + " (E, Längengrad)");
     Serial.println("/position/satellites: " + String(gpsSat) + " (number)");
     Serial.println("/position/altitude: " + String(gpsAlt) + " (meters)");
+    Serial.println("/position/date/year: " + String(gpsYear));
+    Serial.println("/position/date/month: " + String(gpsMonth));
+    Serial.println("/position/date/day: " + String(gpsDay));
+    Serial.println("/position/time/hour: " + String(gpsHour));
+    Serial.println("/position/time/minute: " + String(gpsMinute));
+    Serial.println("/position/time/second: " + String(gpsSecond));
+    Serial.println("/position/time/centisecond: " + String(gpsCentiSecond));
   }
 }
-
-/*
- * Appendix - sources for tutorials:
- * 
- * MQTT publish/subscribe: https://smarthome-blogger.de/tutorial/esp8266-mqtt-tutorial/ (german)
- * MQTT PubSubClient-API: // https://pubsubclient.knolleary.net/api (english)
- * DHT22: https://funduino.de/anleitung-dht11-dht22 (german)
- */
